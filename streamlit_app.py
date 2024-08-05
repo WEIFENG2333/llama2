@@ -1,78 +1,75 @@
 import streamlit as st
-import replicate
-import os
+import requests
+import json
 
-# App title
-st.set_page_config(page_title="🦙💬 Llama 2 Chatbot")
+st.session_state.book_data = None
+st.set_page_config(layout="wide")
 
-# Replicate Credentials
-with st.sidebar:
-    st.title('🦙💬 Llama 2 Chatbot')
-    st.write('This chatbot is created using the open-source Llama 2 LLM model from Meta.')
-    if 'REPLICATE_API_TOKEN' in st.secrets:
-        st.success('API key already provided!', icon='✅')
-        replicate_api = st.secrets['REPLICATE_API_TOKEN']
-    else:
-        replicate_api = st.text_input('Enter Replicate API token:', type='password')
-        if not (replicate_api.startswith('r8_') and len(replicate_api)==40):
-            st.warning('Please enter your credentials!', icon='⚠️')
-        else:
-            st.success('Proceed to entering your prompt message!', icon='👉')
-    os.environ['REPLICATE_API_TOKEN'] = replicate_api
+@st.cache_data
+def search(search_info, page):
+    search_url = 'https://bookapi.bkfeng.top/proxy?targeturl=https://api.ylibrary.org/api/search/'
+    search_url = 'https://bookapi.bkfeng.top/search'
+    search_json = {
+        'query': search_info,
+        'page': page
+    }
+    req = requests.post(search_url, json=search_json, timeout=10)
+    return req.json()
 
-    st.subheader('Models and parameters')
-    selected_model = st.sidebar.selectbox('Choose a Llama2 model', ['Llama2-7B', 'Llama2-13B'], key='selected_model')
-    if selected_model == 'Llama2-7B':
-        llm = 'a16z-infra/llama7b-v2-chat:4f0a4744c7295c024a1de15e1a63c880d3da035fa1f49bfd344fe076074c8eea'
-    elif selected_model == 'Llama2-13B':
-        llm = 'a16z-infra/llama13b-v2-chat:df7690f1994d94e96ad9d568eac121aecf50684a0b0963b25a41cc40061269e5'
-    temperature = st.sidebar.slider('temperature', min_value=0.01, max_value=1.0, value=0.1, step=0.01)
-    top_p = st.sidebar.slider('top_p', min_value=0.01, max_value=1.0, value=0.9, step=0.01)
-    max_length = st.sidebar.slider('max_length', min_value=32, max_value=128, value=120, step=8)
-    st.markdown('📖 Learn how to build this app in this [blog](https://blog.streamlit.io/how-to-build-a-llama-2-chatbot/)!')
 
-# Store LLM generated responses
-if "messages" not in st.session_state.keys():
-    st.session_state.messages = [{"role": "assistant", "content": "How may I assist you today?"}]
+@st.cache_data
+def detail(search_id, source):
+    detail_url = 'https://bookapi.bkfeng.top/proxy?targeturl=https://api.ylibrary.org/api/detail/'
+    detail_json = {
+        'id': search_id,
+        'source': source
+    }
+    try:
+        req = requests.post(detail_url, json=detail_json, timeout=3)
+        return req.json()
+    except:
+        return {"title": search_id, "md5": "", "filesize": 50000000, "extension": "zip"}
 
-# Display or clear chat messages
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
 
-def clear_chat_history():
-    st.session_state.messages = [{"role": "assistant", "content": "How may I assist you today?"}]
-st.sidebar.button('Clear Chat History', on_click=clear_chat_history)
+st.title("本卡风书籍搜索")
 
-# Function for generating LLaMA2 response. Refactored from https://github.com/a16z-infra/llama2-chatbot
-def generate_llama2_response(prompt_input):
-    string_dialogue = "You are a helpful assistant. You do not respond as 'User' or pretend to be 'User'. You only respond once as 'Assistant'."
-    for dict_message in st.session_state.messages:
-        if dict_message["role"] == "user":
-            string_dialogue += "User: " + dict_message["content"] + "\n\n"
-        else:
-            string_dialogue += "Assistant: " + dict_message["content"] + "\n\n"
-    output = replicate.run('a16z-infra/llama13b-v2-chat:df7690f1994d94e96ad9d568eac121aecf50684a0b0963b25a41cc40061269e5', 
-                           input={"prompt": f"{string_dialogue} {prompt_input} Assistant: ",
-                                  "temperature":temperature, "top_p":top_p, "max_length":max_length, "repetition_penalty":1})
-    return output
+# * search bar and text input
+col1, col2 = st.columns([0.9, 0.1])
+with col1:
+    query = st.text_input(
+        label="query", key="query", label_visibility="collapsed", placeholder="输入搜索关键词")
+with col2:
+    search_button = st.button(label="搜索", key="search_button")
 
-# User-provided prompt
-if prompt := st.chat_input(disabled=not replicate_api):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.write(prompt)
+# st.write(query)
+if query and search_button:
+    book_data = search(query, 1)
+    # st.write(book_data)
+    # st.write(book_data)
+    st.session_state.book_data = book_data['data']
 
-# Generate a new response if last message is not from assistant
-if st.session_state.messages[-1]["role"] != "assistant":
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            response = generate_llama2_response(prompt)
-            placeholder = st.empty()
-            full_response = ''
-            for item in response:
-                full_response += item
-                placeholder.markdown(full_response)
-            placeholder.markdown(full_response)
-    message = {"role": "assistant", "content": full_response}
-    st.session_state.messages.append(message)
+if st.session_state.book_data:
+    st.write("搜索结果：")
+    for i in st.session_state.book_data:
+        with st.container(border=True):
+            img_col, detail_col, button = st.columns([0.1, 0.7, 0.2])
+            with img_col:
+                if i.get('cover'):
+                    st.image(i.get('cover', 'https://bookapi.bkfeng.top/static/img/cover.jpg'), use_column_width=True)
+            with detail_col:
+                st.write(f"### {i.get('title', '未知')}")
+                st.write(f"**出版社：** {i.get('publisher', '未知')} ")
+                st.write(f" **作者：** {i.get('author', '未知')}")
+                st.write(f"**文件大小：** {i.get('filesize', '未知')}")
+            with button:
+                if st.button(label="下载", key=i.get('id')):
+                    st.write("下载中...")
+                    download_url = detail(i.get('id'), i.get('source'))
+                    st.write(download_url)
+                    st.write(f"下载链接：[{download_url.get('title', '未知')}](https://bookapi.bkfeng.top/download?md5={download_url.get('md5', '')}&extension={download_url.get('extension', '')})")
+
+# * pagination
+# st.write("上一页")
+# st.write("1")
+# st.write("2")
+# st.write("3")
